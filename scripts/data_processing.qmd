@@ -174,9 +174,9 @@ Clean the joined asthma-PM2.5 data.
 co_monthly_asthma_clean <- co_monthly_asthma %>%
   dplyr::select(NAME, year, month, smokePM_pred, RATE, L95CL, 
                 U95CL, VISITS, GEOID, STATEFP, geometry) %>% 
-  janitor::clean_names()
+  janitor::clean_names() %>% 
+  filter(year >= 2011)
 ```
-
 
 ## Save the data
 
