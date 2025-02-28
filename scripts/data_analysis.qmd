@@ -6,6 +6,14 @@ editor_options:
   chunk_output_type: console
 ---
 
+```{r}
+rm(list = ls())
+```
+
+## Overview 
+
+This script analyzes the relationship between PM2.5 and asthma rates in Colorado through various Poisson regression models. The main goal is to assess the impact of PM2.5 and access to health facilities on asthma rates, both in monthly and fire season contexts.
+
 ## Load packages
 
 ```{r}
@@ -13,15 +21,23 @@ library(tidyverse)
 library(here)
 library(sf)
 library(tmap)
+library(modelsummary)
+library(patchwork)
 ```
 
 ## Load data
 
 ```{r}
+# monthly PM2.5 & asthma data 
 co_monthly_asthma_clean <- read_csv(here("data/new_data/PM2_5-asthma_counties/PM2_5_asthma_CO_monthly.csv"))
+
+# PM2.5 & asthma data aggregated by fire season
+co_fireszn_asthma_clean <- read_csv(here("data/new_data/PM2_5-asthma_counties/PM2_5_asthma_CO_fire_szn.csv"))
 ```
 
 ## Data exploration
+
+Examine the distribution of asthma rates in Colorado. Given that asthma rates are essentially a count of the number of hospitalizations and ED visits, we expect the data to be right-skewed.
 
 ```{r}
 # create a histogram to look at the distribution of the `rate` data 
@@ -40,9 +56,13 @@ ggsave(here("plots/asthma_rate_distribution.png"),
        height = 6)
 ```
 
+Because the data is right-skewed and a count of events, we will use a Poisson regression model to analyze the relationship between PM2.5, health facilities, and asthma rates. 
+
 ## Data analysis
 
 #### Processing 
+
+Add a new variable of asthma rates lagged by 1 month. This will allow us to assess the impact of PM2.5 on asthma rates in the following month. 
 
 ```{r}
 # add a new variable of asthma rates lagged by 1 month
@@ -50,13 +70,133 @@ co_monthly_asthma_clean <- co_monthly_asthma_clean %>%
   mutate(lag_rate = lag(rate, 1)) # lag rates by 1 month
 ```
 
+Because our dependent variable is right-skewed, we log-transformed the data to normalize its distribution. 
+
 ```{r}
-# standardize variables 
+### standardize variables 
+
+# monthly data
 co_monthly_asthma_clean$log.rate <- log(co_monthly_asthma_clean$rate + 1)
 co_monthly_asthma_clean$log.lag_rate <- log(co_monthly_asthma_clean$lag_rate + 1)
 co_monthly_asthma_clean$log.smoke_pm_pred <- log(co_monthly_asthma_clean$smoke_pm_pred + 1)
 co_monthly_asthma_clean$log.health_facility_count <- log(co_monthly_asthma_clean$health_facility_count + 1)
+
+# fire season
+co_fireszn_asthma_clean$log.rate <- log(co_fireszn_asthma_clean$rate + 1)
+co_fireszn_asthma_clean$log.smoke_pm_pred <- log(co_fireszn_asthma_clean$smoke_pm_pred + 1)
+co_fireszn_asthma_clean$log.health_facility_count <- log(co_fireszn_asthma_clean$health_facility_count + 1)
 ```
+
+#### Poisson regression
+
+Generate various models with asthma rates as the response variable, and PM2.5, health facility count, and year as predictors.
+
+###### 2011-2023 (using complete monthly data)
+
+Run two regressions with monthly asthma rates as the response variable: **(1)** current monthly observations of asthma rates and PM2.5 predictions; **(2)** lagged asthma rates by one month with current PM2.5 predictions. 
+
+```{r}
+# log asthma rates by log PM2.5 and health facility count
+model_pois1 <- fixest::fepois(fml = log.rate ~ log.smoke_pm_pred + 
+                                  log.health_facility_count | year, # year as FE
+                                data = co_monthly_asthma_clean)
+summary(model_pois1)
+
+# log lagged asthma rates by log PM2.5 and health facility counts
+model_pois2 <- fixest::fepois(fml = log.lag_rate ~ log.smoke_pm_pred + 
+                                  log.health_facility_count | year, # year as FE
+                                data = co_monthly_asthma_clean)
+summary(model_pois2)
+```
+
+###### Fire seasons 2011-2023 (aggregating monthly data to fire season)
+
+Run a regression with fire season asthma rates as the response variable, and fire season PM2.5 predictions and health facility count as predictors. 
+
+```{r}
+# log asthma rates by log PM2.5 and health facility count
+model_pois3 <- fixest::fepois(fml = log.rate ~ log.smoke_pm_pred + 
+                                  log.health_facility_count | year, 
+                                data = co_fireszn_asthma_clean)
+summary(model_pois3)
+```
+
+## Plotting the results 
+
+#### Make a table combining all model outputs
+
+```{r}
+### make a table of the results
+
+# make a list of all models
+model_list <- list("Model 1 (monthly asthma & PM2.5)" = model_pois1, 
+                   "Model 2 (lagged monthly asthma & PM2.5)" = model_pois2,
+                   "Model 3 (fire season asthma & PM2.5)" = model_pois3)
+
+# export summary table as a word doc
+model_summary <- modelsummary::modelsummary(model_list, 
+                           output = here("plots/tables/model_results.docx"), 
+                           gof_omit = "IC|Log|Pseudo",  # Omits unnecessary goodness-of-fit stats
+                           stars = TRUE)
+
+# export summary table as a png
+modelsummary::modelsummary(model_list, 
+                           output = here("plots/tables/model_results.png"), 
+                           gof_omit = "IC|Log|Pseudo",  # Omits unnecessary goodness-of-fit stats
+                           stars = TRUE)
+```
+
+#### Make a plot of the results
+
+```{r}
+### make some plots of the result coefficients
+
+# model_pois1
+plot1 <- sjPlot::plot_model(model_pois1, 
+                            type = "est",
+                            sort.est = TRUE, 
+                            show.values = TRUE, 
+                            value.offset = 0.3, 
+                            value.size = 2.5,
+                            transform = NULL) + 
+  labs(title = "A",
+       x = " ",
+       y = " ") + 
+  theme_bw()
+
+# model_pois2
+plot2 <- sjPlot::plot_model(model_pois2, 
+                            type = "est",
+                            sort.est = TRUE, 
+                            show.values = TRUE, 
+                            value.offset = 0.3, 
+                            value.size = 2.5,
+                            transform = NULL) + 
+  labs(title = "B",
+       x = "Variable",
+       y = " ") + 
+  theme_bw()
+
+# model_pois3
+plot3 <- sjPlot::plot_model(model_pois3, 
+                            type = "est",
+                            sort.est = TRUE, 
+                            show.values = TRUE, 
+                            value.offset = 0.3, 
+                            value.size = 2.5,
+                            transform = NULL) + 
+  labs(title = "C",
+       x = " ",
+       y = "Coefficient estimate") + 
+  theme_bw()
+
+# combine the plots with patchwork 
+combined_plot <- plot1 + plot2 + plot3 +
+  plot_layout(ncol = 1)
+combined_plot
+```
+
+## Archive
 
 #### Basic linear regression
 
@@ -88,51 +228,6 @@ co_monthly_asthma_clean$log.health_facility_count <- log(co_monthly_asthma_clean
 #                     data = co_monthly_asthma_clean, 
 #                     na.action = na.exclude)
 ```
-
-#### Poisson regression
-
-###### Run different models
-
-Generate various models with asthma rates as the response variable, and PM2.5, health facility count, and year as predictors.
-
-```{r}
-# log asthma rates by log PM2.5 and health facility count
-model_pois1 <- fixest::fepois(fml = log.rate ~ log.smoke_pm_pred + 
-                                  log.health_facility_count + factor(year), 
-                                data = co_monthly_asthma_clean)
-summary(model_pois1)
-
-# log lagged asthma rates by log PM2.5 and health facility counts
-model_pois2 <- fixest::fepois(fml = log.lag_rate ~ log.smoke_pm_pred + 
-                                  log.health_facility_count + factor(year), 
-                                data = co_monthly_asthma_clean)
-summary(model_pois2)
-```
-
-###### Plot the results
-
-```{r}
-### make some plots of the result coefficients
-
-# model_pois1
-sjPlot::plot_model(model_pois1, sort.est = TRUE, 
-                   show.values = TRUE, value.offset = 0.3, 
-                   value.size = 2.5) + 
-  labs(title = "Poisson regression of asthma rates by PM2.5 and # of health facilities",
-       x = "Coefficient",
-       y = "Odds ratios") + 
-  theme_bw()
-
-# model_pois2
-sjPlot::plot_model(model_pois2, sort.est = TRUE, 
-                   show.values = TRUE, value.offset = 0.3, 
-                   value.size = 2.5) + 
-  labs(title = "Poisson regression of lagged asthma rates by PM2.5 and # of health facilities",
-       x = "Coefficient",
-       y = "Odds ratios") + 
-  theme_bw()
-```
-
 
 
 

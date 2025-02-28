@@ -11,17 +11,24 @@ rm(list = ls())
 
 ## Overview
 
-This script loads and processes the necessary data for the project. The main goal is to get one dataset that includes monthly PM2.5 data and asthma data by county.
+This script loads and processes the necessary data for the project into a data frame suitable for running regressions. The main goal is to produce two df's: **(1)** including monthly PM2.5 data, asthma data, and the number of health facilities by county; **(2)** including PM2.5 data, asthma data, and the number of health facilities by county for fire season months (May - September).
 
 ## Data description
 
 `PM2.5`:
-- Sourced from the [Environmental Change & Human Outcomes Lab (ECHO)](https://www.stanfordecholab.com/wildfire_smoke)
-- Contains daily 10km wildfire smoke PM2.5 data between 2006-2023, also providing county, censust tract, and zip code level estimates
-- Citation:
-    - 
 
-- ...
+-   Contains daily 10km wildfire smoke PM2.5 data between 2006-2020, also providing county, census tract, and zip code level estimates.
+-   Sourced from the [Environmental Change & Human Outcomes Lab (ECHO)](https://www.stanfordecholab.com/wildfire_smoke)
+
+`Asthma`:
+
+-   Monthly rates (per 10,000 people) of hospitalizations and emergency department (ED) visits among Colorado residents over time (2011-2023) and across counties.
+-   Sourced from the [Colorado Department of Public Health & Environment (CDPHE)](https://coepht.colorado.gov/asthma-data)
+
+`Health facilities`
+
+- Addresses represented as point locations for regulated CDPHE health facilities
+- Sourced from the [CDPHE Health Facilities and Emergency Medical Services Division](https://data-cdphe.opendata.arcgis.com/datasets/cdphe-health-facilities/explore)
 
 ## Load packages
 
@@ -40,30 +47,34 @@ library(here)
 
 ###### 10 km grid
 
+Daily estimates of smoke PM2.5 for the contiguous United States at 10 km resolution, from 2006-2023. This is a more granular scale than needed for the project, but keeping it for now in case we want to use it later.
+ 
 Script provided by the `daily-10km-smokePM` repository linked [here](https://github.com/echolab-stanford/daily-10km-smokePM)
 
 ```{r}
-# Load smokePM predictions on smoke days
-preds = readRDS(here("data/PM2_5/10km_grid/smokePM2pt5_predictions_daily_10km_20060101-20231231.rds"))
-
-# Load 10 km grid
-grid_10km = read_sf(here("data/PM2_5/10km_grid/10km_grid_wgs84/10km_grid_wgs84.shp"))
-
-# Load full set of dates
-dates = seq.Date(ymd("20060101"), ymd("20201231"), by = "day")
-
-# Get full combination of grid cell-days
-# Warning: this may require a large amount of memory
-out = expand.grid(grid_id_10km = grid_10km$ID, date = dates)
-
-# Match smokePM predictions on smoke days to grid cell-days
-out = left_join(out, preds, by = c("grid_id_10km", "date"))
-
-# Predict 0 for remaining grid cell-days, which are non-smoke days
-out = mutate(out, smokePM_pred = replace_na(smokePM_pred, 0))
+# # Load smokePM predictions on smoke days
+# preds = readRDS(here("data/PM2_5/10km_grid/smokePM2pt5_predictions_daily_10km_20060101-20231231.rds"))
+# 
+# # Load 10 km grid
+# grid_10km = read_sf(here("data/PM2_5/10km_grid/10km_grid_wgs84/10km_grid_wgs84.shp"))
+# 
+# # Load full set of dates
+# dates = seq.Date(ymd("20060101"), ymd("20201231"), by = "day")
+# 
+# # Get full combination of grid cell-days
+# # Warning: this may require a large amount of memory
+# out = expand.grid(grid_id_10km = grid_10km$ID, date = dates)
+# 
+# # Match smokePM predictions on smoke days to grid cell-days
+# out = left_join(out, preds, by = c("grid_id_10km", "date"))
+# 
+# # Predict 0 for remaining grid cell-days, which are non-smoke days
+# out = mutate(out, smokePM_pred = replace_na(smokePM_pred, 0))
 ```
 
 ###### County level
+
+Daily estimates of smoke PM2.5 for the contiguous United States at county resolution, from 2006-2020. This is the spatial scale we will use for the project.
 
 Script provided by the `daily-10km-smokePM` repository linked [here](https://github.com/echolab-stanford/daily-10km-smokePM)
 
@@ -88,7 +99,9 @@ out = left_join(out, preds, by = c("GEOID", "date"))
 out = mutate(out, smokePM_pred = replace_na(smokePM_pred, 0))
 ```
 
-#### Asthma data 
+#### Asthma data
+
+Monthly asthma rates (per 10,000 people) of hospitalizations and emergency department (ED) visits among Colorado residents in each county between 2011-2023. 
 
 ```{r}
 # by county (2011-2023)
@@ -124,8 +137,8 @@ out_monthly <- out %>%
 
 Filter the data for California and Colorado:
 
-- California FIPS code: `06`
-- Colorado FIPS code: `08`
+-   California FIPS code: `06` 
+-   Colorado FIPS code: `08` 
 
 ```{r}
 # join the `counties` shapefile to the monthly PM2.5 data by GEOID
@@ -134,10 +147,10 @@ out_monthly_counties <- left_join(out_monthly, counties,
 
 # filter for California and Colorado
 ca_monthly <- out_monthly_counties %>%
-  filter(STATEFP == "06")
+  filter(STATEFP == "06") # CA statefp
 
 co_monthly <- out_monthly_counties %>%
-  filter(STATEFP == "08")
+  filter(STATEFP == "08") # CO statefp
 ```
 
 Quick check to make sure the data is correct!
@@ -157,7 +170,7 @@ if (unique(co_monthly$GEOID) %>% length() == 64) {
 }
 ```
 
-#### Join the asthma data to the CA county-PM2.5 data
+#### Join the asthma data to the CO county-PM2.5 data
 
 Make sure the `COUNTY` column in the asthma data matches the `NAME` column in the PM2.5 data, and then join by county name.
 
@@ -167,9 +180,9 @@ asthma_county_monthly <- asthma_county_monthly %>%
   rename(NAME = COUNTY, 
          month = MONTH,
          year = YEAR) %>% 
-  mutate(month = as.integer(month))
+  mutate(month = as.integer(month)) # change month to integer to match PM2.5 data
 
-# join the asthma data to the CA county-PM2.5 data by `NAME`
+# join the asthma data to the CA county-PM2.5 data by `NAME`, `month`, and `year`
 co_monthly_asthma <- left_join(co_monthly, asthma_county_monthly, 
                                by = c("NAME", "month", "year"))
 ```
@@ -181,23 +194,20 @@ Clean the joined asthma-PM2.5 data.
 co_monthly_asthma_clean <- co_monthly_asthma %>%
   dplyr::select(NAME, year, month, smokePM_pred, RATE, L95CL, 
                 U95CL, VISITS, GEOID, STATEFP, geometry) %>% 
-  janitor::clean_names() %>% 
-  filter(year >= 2011)
+  janitor::clean_names() %>% # clean names
+  filter(year >= 2011) # only keep data with astha rate observations
 ```
 
 #### Health facilities
 
-###### Select relevant facilities and county by county 
+###### Get the number of health facilities in each county
 
 ```{r}
-# select only the facilities we're interested in
-# COME BACK TO THIS LATER
-
 # group by county and get the number of health facilities in each county
 health_facilities_county <- health_facilities %>%
   group_by(County) %>%
   summarise(health_facility_count = n()) %>% 
-  rename(name = County) # rename for later joining with the PM2.5/asthma data
+  rename(name = County) # rename for joining with the PM2.5/asthma data
 
 # change all observations in the County column to lowercase with a capital first letter
 health_facilities_county$name <- str_to_title(health_facilities_county$name)
@@ -206,20 +216,20 @@ health_facilities_county$name <- str_to_title(health_facilities_county$name)
 ###### Join the health facilities data to the PM2.5/asthma data
 
 ```{r}
-# join the health facilities data to the PM2.5/asthma data by county name
+# join the health facilities data by county name
 co_monthly_asthma_clean <- left_join(co_monthly_asthma_clean, 
                                        health_facilities_county, 
                                        by = "name")
 ```
 
-#### Aggregate the data by fire season months 
+#### Aggregate the data by fire season months
 
-To examine the relationship between PM2.5 and asthma rates during fire season months, we'll aggregate the data by Colorado fire season months -- May - September [U.S. DOI BLM](https://www.blm.gov/programs/public-safety-and-fire/fire-and-aviation/regional-information/colorado#:~:text=During%20Colorado's%20fire%20season%2C%20which,coverage%20to%20respond%20to%20wildfires.). Do this by filtering to these months, grouping by county and year, and then summing the PM 2.5 predictions, and taking the average of the asthma and health facility data.
+To examine the relationship between PM2.5 and asthma rates during fire season months, we'll aggregate the data by Colorado fire season months, May - September [U.S. DOI BLM](https://www.blm.gov/programs/public-safety-and-fire/fire-and-aviation/regional-information/colorado#:~:text=During%20Colorado's%20fire%20season%2C%20which,coverage%20to%20respond%20to%20wildfires.). Do this by filtering to these months, grouping by county and year, and then summing the PM 2.5 predictions, and taking the average of the asthma and health facility data.
 
 ```{r}
-# filter to fire season months
+# filter to fire season months & generate observations for each fire season-year
 co_monthly_asthma_fire_szn <- co_monthly_asthma_clean %>%
-  filter(month %in% 5:9) %>% 
+  filter(month %in% 5:9) %>% # May - September
   group_by(name, year) %>% 
   summarise(smoke_pm_pred = sum(smoke_pm_pred, na.rm = TRUE),
             rate = mean(rate, na.rm = TRUE),
@@ -234,16 +244,16 @@ co_monthly_asthma_fire_szn <- co_monthly_asthma_clean %>%
 #### Just county and PM2.5 data
 
 ```{r}
-### Colorado data
-write_csv(co_monthly, here("data/new_data/PM2_5-counties/PM2_5_CO_monthly_counties.csv"))
-write_sf(co_monthly, here("data/new_data/PM2_5-counties/PM2_5_CO_monthly_counties.shp"))
-
-# ### California data
-# write_csv(ca_monthly, here("data/new_data/PM2_5-counties/PM2_5_CA_monthly_counties.csv"))
-# write_sf(ca_monthly, here("data/new_data/PM2_5-counties/PM2_5_CA_monthly_counties.shp"))
+# ### Colorado data
+# write_csv(co_monthly, here("data/new_data/PM2_5-counties/PM2_5_CO_monthly_counties.csv"))
+# write_sf(co_monthly, here("data/new_data/PM2_5-counties/PM2_5_CO_monthly_counties.shp"))
+# 
+# # ### California data
+# # write_csv(ca_monthly, here("data/new_data/PM2_5-counties/PM2_5_CA_monthly_counties.csv"))
+# # write_sf(ca_monthly, here("data/new_data/PM2_5-counties/PM2_5_CA_monthly_counties.shp"))
 ```
 
-#### PM2.5 data and asthma data by county
+#### PM2.5 data and asthma data by county for monthly observations
 
 ```{r}
 # save the cleaned data with PM2.5 & asthma rates by county
@@ -251,18 +261,12 @@ write_csv(co_monthly_asthma_clean, here("data/new_data/PM2_5-asthma_counties/PM2
 write_sf(co_monthly_asthma_clean, here("data/new_data/PM2_5-asthma_counties/PM2_5_asthma_CO_monthly.shp"))
 ```
 
-#### PM2.5 and asthma data by county for fire season months
+#### PM2.5 and asthma data by county for fire season observations
 
 ```{r}
 # save the cleaned data with PM2.5 & asthma rates by county for fire season months
 write_csv(co_monthly_asthma_fire_szn, here("data/new_data/PM2_5-asthma_counties/PM2_5_asthma_CO_fire_szn.csv"))
 ```
-
-
-
-
-
-
 
 
 
